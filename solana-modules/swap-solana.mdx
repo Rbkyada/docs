@@ -659,20 +659,6 @@ const safeSwapOperation = async (params: SwapParams, privateKey: string) => {
 **Recommendation:** Use Jupiter for most swapping needs due to better price discovery. Use Raydium when you specifically need Raydium's features or pools.
 </Info>
 
-## Troubleshooting
-
-### Common Issues & Solutions
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| **"Failed to get quote"** | Invalid token addresses or insufficient liquidity | Verify token mint addresses and check if pair has liquidity |
-| **"Transaction failed"** | Insufficient SOL for fees or slippage exceeded | Ensure wallet has SOL for fees, increase slippage tolerance |
-| **"Network timeout"** | RPC connection issues | Use reliable RPC endpoint, implement retry logic |
-| **"Invalid private key"** | Incorrect key format or encoding | Ensure private key is hex encoded (matching wallet management) |
-| **"High price impact"** | Large trade size or low liquidity | Reduce swap amount or increase slippage tolerance |
-| **"Raydium API error"** | Raydium service issues | Try Jupiter method or retry later |
-| **"Versioned transaction error"** | RPC doesn't support V0 transactions | Use different RPC endpoint or Jupiter method |
-
 ## API Endpoints Reference
 
 - **Jupiter Swap & Quote API**: `https://quote-api.jup.ag/v6/quote`
