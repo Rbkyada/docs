@@ -1,0 +1,376 @@
+---
+title: 'Transfer funds'
+description: 'Complete guide to transferring SOL and SPL tokens on Solana in React Native'
+---
+
+This guide covers SOL and SPL token transfers on Solana using your React Native application.
+
+## Dependencies
+
+First, install the required dependencies for SPL token transfers:
+
+```bash
+npm install @solana/spl-token
+```
+
+<Info>
+Make sure you have already set up the [React Native Expo Web3 polyfills](/react-native-expo-setup) and [Wallet Management](/solana-modules/wallet-management) before implementing transfer functionality.
+</Info>
+
+## Configuration
+
+### Connection Setup
+
+```typescript
+import { Connection } from '@solana/web3.js';
+
+export const SOLANA_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=e9cfcd3a-4865-49b7-8f40-e35e2182bcef';
+const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+```
+
+## Core Interfaces and Types
+
+### Transfer Parameters Interface
+
+```typescript
+export interface TransferParams {
+  toPublicKey: string;  // Recipient's public key
+  amount: number;       // Amount to transfer
+}
+
+export interface SPLTransferParams extends TransferParams {
+  tokenMint: string;    // SPL token mint address
+  decimals: number;     // Token decimals
+}
+```
+
+## Utility Functions
+
+### Private Key Handling
+
+```typescript
+import { Keypair } from '@solana/web3.js';
+import { Buffer } from 'buffer';
+
+// Convert hex private key to Keypair (matching wallet management approach)
+export const createKeypairFromHex = (privateKeyHex: string): Keypair => {
+  const privateKeyBytes = Buffer.from(privateKeyHex, 'hex');
+  return Keypair.fromSecretKey(privateKeyBytes);
+};
+```
+
+### Debug Logging
+
+```typescript
+const debugLog = (message: string, data?: any) => {
+  console.log(`[Transfer] ${message}`, data || '');
+};
+```
+
+## Transfer Functions
+
+### SOL Transfer
+
+Transfer native SOL between wallets:
+
+```typescript
+import { 
+  PublicKey, 
+  Transaction, 
+  SystemProgram, 
+  LAMPORTS_PER_SOL 
+} from '@solana/web3.js';
+
+export const transferSOL = async (
+  privateKey: string,
+  toPublicKey: string,
+  amount: number
+): Promise<string | null> => {
+  debugLog('Starting SOL transfer', { toPublicKey, amount });
+  
+  try {
+    // Convert hex private key and create keypair
+    const keypair = createKeypairFromHex(privateKey);
+    const toPublicKeyObj = new PublicKey(toPublicKey);
+
+    const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
+
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: keypair.publicKey,
+        toPubkey: toPublicKeyObj,
+        lamports,
+      })
+    );
+
+    // Get recent blockhash
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = keypair.publicKey;
+
+    // Sign and send transaction
+    transaction.sign(keypair);
+    const signature = await connection.sendRawTransaction(
+      transaction.serialize()
+    );
+    
+    await connection.confirmTransaction(signature, 'confirmed');
+    debugLog('SOL transfer completed:', signature);
+    
+    return signature;
+  } catch (error) {
+    debugLog('SOL transfer error:', error);
+    return null;
+  }
+};
+```
+
+### SPL Token Transfer
+
+Transfer SPL tokens between wallets:
+
+```typescript
+import {
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
+  getAccount
+} from '@solana/spl-token';
+
+export const transferSPLToken = async (
+  privateKey: string,
+  toPublicKey: string,
+  tokenMint: string,
+  amount: number,
+  decimals: number
+): Promise<string | null> => {
+  debugLog('Starting SPL token transfer', { toPublicKey, tokenMint, amount });
+  
+  try {
+    // Convert hex private key and create keypair
+    const keypair = createKeypairFromHex(privateKey);
+    const toPublicKeyObj = new PublicKey(toPublicKey);
+    const mintPublicKey = new PublicKey(tokenMint);
+
+    // Get sender's token account
+    const fromTokenAccount = await getAssociatedTokenAddress(
+      mintPublicKey,
+      keypair.publicKey
+    );
+
+    // Get or create receiver's token account
+    const toTokenAccount = await getAssociatedTokenAddress(
+      mintPublicKey,
+      toPublicKeyObj
+    );
+
+    const transaction = new Transaction();
+
+    // Check if receiver's token account exists, create if not
+    try {
+      await getAccount(connection, toTokenAccount);
+      debugLog('Receiver token account exists');
+    } catch (error) {
+      debugLog('Creating receiver token account');
+      transaction.add(
+        createAssociatedTokenAccountInstruction(
+          keypair.publicKey, // payer
+          toTokenAccount,    // associated token account
+          toPublicKeyObj,    // owner
+          mintPublicKey      // mint
+        )
+      );
+    }
+
+    // Add transfer instruction
+    const transferAmount = Math.floor(amount * Math.pow(10, decimals));
+    transaction.add(
+      createTransferInstruction(
+        fromTokenAccount,  // source
+        toTokenAccount,    // destination
+        keypair.publicKey, // owner
+        transferAmount     // amount
+      )
+    );
+
+    // Get recent blockhash
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = keypair.publicKey;
+
+    // Sign and send transaction
+    transaction.sign(keypair);
+    const signature = await connection.sendRawTransaction(
+      transaction.serialize()
+    );
+    
+    await connection.confirmTransaction(signature, 'confirmed');
+    debugLog('SPL token transfer completed:', signature);
+    
+    return signature;
+  } catch (error) {
+    debugLog('SPL token transfer error:', error);
+    return null;
+  }
+};
+```
+
+## Usage Examples
+
+### Basic SOL Transfer
+
+```typescript
+import { loadWallet } from '@/utils/wallet'; // From wallet management
+
+// Example: Transfer 0.1 SOL
+const performSOLTransfer = async (recipientAddress: string) => {
+  try {
+    // Load wallet
+    const wallet = await loadWallet();
+    if (!wallet) {
+      throw new Error('No wallet found');
+    }
+
+    // Transfer SOL
+    const signature = await transferSOL(
+      wallet.privateKey,
+      recipientAddress,
+      0.1 // 0.1 SOL
+    );
+    
+    if (signature) {
+      console.log('SOL transfer completed successfully:', signature);
+    } else {
+      console.error('SOL transfer failed');
+    }
+  } catch (error) {
+    console.error('Transfer operation failed:', error);
+  }
+};
+```
+
+## Error Handling
+
+Always wrap transfer operations in comprehensive try-catch blocks:
+
+```typescript
+const safeTransferOperation = async (
+  privateKey: string,
+  recipient: string,
+  amount: number,
+  isSOL: boolean = true
+) => {
+  try {
+    // Validate inputs
+    if (!privateKey || !recipient || !amount) {
+      throw new Error('Missing required parameters');
+    }
+
+    // Validate recipient address
+    try {
+      new PublicKey(recipient);
+    } catch {
+      throw new Error('Invalid recipient address');
+    }
+
+    // Validate amount
+    if (amount <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+
+    // Execute transfer
+    const signature = isSOL 
+      ? await transferSOL(privateKey, recipient, amount)
+      : await transferSPLToken(privateKey, recipient, tokenMint, amount, decimals);
+
+    if (!signature) {
+      throw new Error('Transfer failed');
+    }
+
+    return signature;
+  } catch (error) {
+    console.error('Transfer operation failed:', error);
+    throw error;
+  }
+};
+```
+
+## Troubleshooting
+
+### Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| **"Insufficient funds"** | Not enough SOL/tokens in wallet | Check balance before transfer |
+| **"Invalid recipient address"** | Malformed public key | Validate address format |
+| **"Transaction failed"** | Network issues or insufficient SOL for fees | Retry with higher fees or check network |
+| **"Token account not found"** | Recipient doesn't have token account | Function automatically creates it |
+| **"Invalid private key"** | Incorrect hex format | Ensure private key is valid hex string |
+
+## Transaction Monitoring
+
+### Check Transaction Status
+
+```typescript
+export const checkTransactionStatus = async (signature: string) => {
+  try {
+    const status = await connection.getSignatureStatus(signature);
+    debugLog('Transaction status:', status);
+    return status.value;
+  } catch (error) {
+    debugLog('Error checking transaction status:', error);
+    return null;
+  }
+};
+```
+
+## Related Modules
+
+This transfer system is part of a complete Solana ecosystem:
+
+### Required Dependencies
+- **[Wallet Management](/solana-modules/wallet-management)** - **REQUIRED** - Provides `loadWallet()` and hex private key format
+- **[React Native Expo Setup](/react-native-expo-setup)** - **REQUIRED** - Web3 polyfills for crypto functions
+
+### Complementary Modules
+- **[Token Swaps](/solana-modules/swap-solana)** - Exchange tokens before/after transfers using Jupiter or Raydium
+- **[Balance Fetching](/solana-modules/fetch-balance-solana)** - Check balances before transfers to ensure sufficient funds
+
+### Integration Pattern
+
+```typescript
+// Complete payment flow combining modules
+import { loadWallet } from '@/utils/wallet'; // Wallet Management
+import { transferSOL, transferSPLToken } from '@/utils/transfer'; // This module
+import { getJupiterQuote, executeJupiterSwap } from '@/utils/jupiter'; // Token Swaps
+
+const completePaymentFlow = async (recipient: string, amount: number) => {
+  // 1. Load wallet (from Wallet Management)
+  const wallet = await loadWallet();
+  
+  // 2. Optional: Swap to desired token first (from Token Swaps)
+  const quote = await getJupiterQuote({...});
+  const swapSignature = await executeJupiterSwap(quote, wallet.privateKey);
+  
+  // 3. Transfer tokens (from this module)
+  const transferSignature = await transferSOL(wallet.privateKey, recipient, amount);
+  
+  return { swapSignature, transferSignature };
+};
+```
+
+### Common Use Cases
+
+1. **Simple Payments** - Use transfer functions directly
+2. **Cross-Token Payments** - Combine with swaps to accept any token
+3. **DeFi Operations** - Transfer tokens to/from protocols
+4. **Portfolio Management** - Move tokens between wallets
+
+## Next Steps
+
+With Solana transfer functionality set up, you can now:
+- **[Swap Tokens](/solana-modules/swap-solana)** - Exchange tokens using Jupiter or Raydium before transfers
+- **[Check Balances](/solana-modules/fetch-balance-solana)** - Monitor wallet balances before/after transfers  
+- **[Manage Wallets](/solana-modules/wallet-management)** - Create multiple wallets for different purposes
+
+Your Solana transfer system is now ready to power payment and DeFi applications in React Native! 

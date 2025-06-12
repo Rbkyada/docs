@@ -1,0 +1,156 @@
+---
+title: 'Wallet Management'
+description: 'Complete guide to creating, saving, and managing Solana wallets in React Native'
+---
+
+This guide covers creating, saving, and managing Solana wallets in your React Native application using secure local storage.
+
+## Dependencies
+
+First, install the required dependencies:
+
+```bash
+npm install @react-native-async-storage/async-storage @solana/web3.js
+```
+
+<Info>
+Make sure you have already set up the [React Native Expo Web3 polyfills](/react-native-expo-setup) before implementing wallet management.
+</Info>
+
+## Core Interfaces and Types
+
+### WalletData Interface
+
+```typescript
+export interface WalletData {
+  publicKey: string;
+  privateKey: string;
+}
+```
+
+## Utility Functions
+
+### Ensure Crypto Ready
+
+Before generating wallets, ensure the crypto polyfills are properly initialized:
+
+```typescript
+const ensureCrypto = () => {
+  if (
+    typeof global.crypto === 'undefined' ||
+    typeof global.crypto.getRandomValues === 'undefined'
+  ) {
+    throw new Error('Crypto not initialized.');
+  }
+};
+```
+
+### Generate New Wallet
+
+Create a new Solana wallet with a keypair:
+
+```typescript
+import { Keypair } from '@solana/web3.js';
+import { Buffer } from 'buffer';
+
+export const generateWallet = (): WalletData => {
+  ensureCrypto();
+  const keypair = Keypair.generate();
+  return {
+    publicKey: keypair.publicKey.toString(),
+    privateKey: Buffer.from(keypair.secretKey).toString('hex'),
+  };
+};
+```
+
+### Save Wallet to AsyncStorage
+
+Securely store the wallet data locally:
+
+```typescript
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export const saveWallet = async (wallet: WalletData) => {
+  await AsyncStorage.setItem('solana_wallet', JSON.stringify(wallet));
+};
+```
+
+### Load Wallet from AsyncStorage
+
+Retrieve the saved wallet from local storage:
+
+```typescript
+export const loadWallet = async (): Promise<WalletData | null> => {
+  const walletJson = await AsyncStorage.getItem('solana_wallet');
+  return walletJson ? JSON.parse(walletJson) : null;
+};
+```
+
+### Clear Wallet
+
+Remove wallet data from storage:
+
+```typescript
+export const clearWallet = async () => {
+  await AsyncStorage.removeItem('solana_wallet');
+};
+```
+
+
+## Security Considerations
+
+<Warning>
+**Important Security Notes:**
+- Private keys are stored in plain text in AsyncStorage
+- For production apps, consider using secure storage solutions like React Native Keychain
+- Never share or expose private keys
+- Always validate wallet data before using it
+</Warning>
+
+## Error Handling
+
+Always wrap wallet operations in try-catch blocks:
+
+```typescript
+try {
+  const wallet = await loadWallet();
+  if (wallet) {
+    // Use wallet
+  }
+} catch (error) {
+  console.error('Wallet operation failed:', error);
+  // Handle error appropriately
+}
+```
+
+## Integration with Other Modules
+
+This wallet management system is the **foundation** for all other Solana operations. The hex private key format is used consistently across:
+
+- **[Token Transfers](/solana-modules/transfer-token)** - Uses `loadWallet()` to get hex private key for SOL/SPL transfers
+- **[Token Swaps](/solana-modules/swap-solana)** - Uses `loadWallet()` to get hex private key for Jupiter/Raydium swaps
+- **[Balance Fetching](/solana-modules/fetch-balance-solana)** - Uses wallet public key to check account balances
+
+### Cross-Module Usage Pattern
+
+```typescript
+// Standard pattern used across all modules
+import { loadWallet } from '@/utils/wallet'; // From this wallet management module
+
+const performOperation = async () => {
+  const wallet = await loadWallet();
+  if (!wallet) {
+    throw new Error('No wallet found');
+  }
+  
+  // Use wallet.privateKey (hex format) for signing
+  // Use wallet.publicKey for address operations
+};
+```
+
+## Next Steps
+
+With wallet management set up, you can now:
+- **[Transfer Tokens](/solana-modules/transfer-token)** - Send SOL and SPL tokens between wallets
+- **[Swap Tokens](/solana-modules/swap-solana)** - Exchange tokens using Jupiter or Raydium
+- **[Check Balances](/solana-modules/fetch-balance-solana)** - Monitor wallet and token balances

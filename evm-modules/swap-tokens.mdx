@@ -1,0 +1,732 @@
+# EVM Token Swapping - React Native Guide
+
+## Overview
+
+This guide covers token swapping across multiple EVM-compatible chains using two different approaches: **1inch API** for optimal routing and pricing, and **Uniswap V2 Router** for direct on-chain interaction. Similar to our Solana swap implementation with Jupiter and Raydium, this provides flexibility between API-based and decentralized approaches.
+
+## Key Features
+
+- **Dual Swap Methods**: 1inch API (Method 1) and Uniswap V2 Router (Method 2)
+- **Multi-Chain Support**: Works across Ethereum, Polygon, BSC, Arbitrum, Optimism, and Avalanche
+- **Universal Functions**: Handles native-to-token, token-to-native, and token-to-token swaps
+- **Automatic Token Approval**: Seamless ERC-20 token approval handling
+- **Slippage Protection**: Configurable slippage tolerance for both methods
+- **Comprehensive Error Handling**: Robust validation and error management
+
+## Dependencies
+
+```bash
+npm install ethers@^6.14.3 @react-native-async-storage/async-storage
+```
+
+## Chain Configuration
+
+```typescript
+// Chain IDs for supported EVM networks
+export const EVM_CHAIN_IDS = {
+  ETHEREUM: 1,
+  POLYGON: 137,
+  BSC: 56,
+  ARBITRUM: 42161,
+  OPTIMISM: 10,
+  AVALANCHE: 43114,
+} as const;
+
+// RPC URLs for each supported chain
+export const ETHEREUM_RPC_URL = 'https://eth.llamarpc.com';
+export const POLYGON_RPC_URL = 'https://polygon-rpc.com';
+export const BSC_RPC_URL = 'https://bsc-dataseed.binance.org';
+export const ARBITRUM_RPC_URL = 'https://arb1.arbitrum.io/rpc';
+export const OPTIMISM_RPC_URL = 'https://mainnet.optimism.io';
+export const AVALANCHE_RPC_URL = 'https://api.avax.network/ext/bc/C/rpc';
+
+// Chain information
+export const EVM_CHAINS = {
+  [EVM_CHAIN_IDS.ETHEREUM]: {
+    chainId: EVM_CHAIN_IDS.ETHEREUM,
+    name: 'Ethereum',
+    nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
+    rpcUrl: ETHEREUM_RPC_URL,
+  },
+  [EVM_CHAIN_IDS.POLYGON]: {
+    chainId: EVM_CHAIN_IDS.POLYGON,
+    name: 'Polygon',
+    nativeCurrency: { name: 'Polygon', symbol: 'MATIC', decimals: 18 },
+    rpcUrl: POLYGON_RPC_URL,
+  },
+  [EVM_CHAIN_IDS.BSC]: {
+    chainId: EVM_CHAIN_IDS.BSC,
+    name: 'BNB Smart Chain',
+    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+    rpcUrl: BSC_RPC_URL,
+  },
+  [EVM_CHAIN_IDS.ARBITRUM]: {
+    chainId: EVM_CHAIN_IDS.ARBITRUM,
+    name: 'Arbitrum One',
+    nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
+    rpcUrl: ARBITRUM_RPC_URL,
+  },
+  [EVM_CHAIN_IDS.OPTIMISM]: {
+    chainId: EVM_CHAIN_IDS.OPTIMISM,
+    name: 'Optimism',
+    nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
+    rpcUrl: OPTIMISM_RPC_URL,
+  },
+  [EVM_CHAIN_IDS.AVALANCHE]: {
+    chainId: EVM_CHAIN_IDS.AVALANCHE,
+    name: 'Avalanche C-Chain',
+    nativeCurrency: { name: 'Avalanche', symbol: 'AVAX', decimals: 18 },
+    rpcUrl: AVALANCHE_RPC_URL,
+  },
+} as const;
+```
+
+## Core Interfaces
+
+```typescript
+import { ethers } from 'ethers';
+
+// Common swap parameters
+interface SwapParams {
+  fromTokenAddress: string;
+  toTokenAddress: string;
+  amount: string;
+  fromAddress: string;
+  chainId: number;
+  slippage: number; // e.g., 0.01 for 1%
+}
+
+// 1inch API interfaces
+interface OneInchApproval {
+  data: string;
+  gasPrice: string;
+  to: string;
+  value: string;
+}
+
+interface OneInchSwapTx {
+  tx: {
+    data: string;
+    to: string;
+    value: string;
+    gasPrice: string;
+  };
+  toAmount: string;
+}
+
+// Uniswap interfaces
+interface TokenData {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  isNative: boolean;
+}
+
+interface UniswapQuote {
+  fromToken: TokenData;
+  toToken: TokenData;
+  fromAmount: string;
+  toAmount: string;
+  gasEstimate: string;
+  priceImpact: string;
+  route: {
+    path: string[];
+    amounts: string[];
+  };
+}
+```
+
+---
+
+## Method 1: 1inch API Integration (- Recommended)
+- Default 1inch swap easy to setup
+
+### Configuration
+
+```typescript
+// 1inch API configuration
+const BASE_URL = "https://api.1inch.dev/swap/v6.0";
+const EXPO_PUBLIC_INCH_KEY = ''; // Add your API key from 1inch dashboard (env)
+
+// Helper function to get headers
+const getOneInchHeaders = () => ({
+  'Authorization': `Bearer ${EXPO_PUBLIC_INCH_KEY}`,
+  'Content-Type': 'application/json',
+});
+```
+
+### Get Token Allowance
+
+```typescript
+/**
+ * Function to get the current allowance for a token
+ */
+export async function getAllowance(
+  tokenAddress: string,
+  walletAddress: string,
+  chainId: number
+): Promise<string | undefined> {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/${chainId}/approve/allowance?tokenAddress=${tokenAddress}&walletAddress=${walletAddress}`,
+      {
+        headers: getOneInchHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch allowance");
+    }
+
+    const data = await response.json();
+    return data.allowance;
+  } catch (error) {
+    console.error('Allowance fetch error:', error);
+    throw new Error("Allowance fetch failed");
+  }
+}
+```
+
+### Get Approval Transaction
+
+```typescript
+/**
+ * Function to get the approval transaction details
+ */
+export const getApprovalTransaction = async (
+  tokenAddress: string,
+  amount: string,
+  chainId: number
+): Promise<OneInchApproval | undefined> => {
+  try {
+    const response = await fetch(
+      `${BASE_URL}/${chainId}/approve/transaction?tokenAddress=${tokenAddress}&amount=${amount}`,
+      {
+        headers: getOneInchHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch approval transaction");
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Approval transaction error:', error);
+    throw new Error("Approval transaction fetch failed");
+  }
+};
+```
+
+### Get Swap Transaction
+
+```typescript
+/**
+ * Function to get swap transaction from 1inch API
+ */
+export const getSwapTransaction = async ({
+  chainId,
+  fromToken,
+  toToken,
+  amount,
+  address,
+  slippage = "1",
+}: {
+  chainId: number;
+  fromToken: string;
+  toToken: string;
+  amount: string;
+  address: string;
+  slippage: string;
+}): Promise<OneInchSwapTx | undefined> => {
+  const url = `${BASE_URL}/${chainId}/swap?src=${fromToken}&dst=${toToken}&amount=${amount}&from=${address}&origin=${address}&slippage=${slippage}`;
+  console.log("Fetching swap transaction from:", url);
+
+  try {
+    const response = await fetch(url, {
+      headers: getOneInchHeaders(),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("Error response from API:", errorBody);
+      throw new Error(`API Error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching swap transaction:", error);
+    throw error;
+  }
+};
+```
+
+### Execute 1inch Swap
+
+```typescript
+import { loadWallet } from '@/utils/evm-wallet'; // From wallet management module
+
+/**
+ * Execute swap using 1inch API
+ */
+export const executeOneInchSwap = async (swapParams: SwapParams): Promise<string> => {
+  try {
+    // Load wallet
+    const wallet = await loadWallet();
+    if (!wallet) {
+      throw new Error('No wallet found');
+    }
+
+    const chain = EVM_CHAINS[swapParams.chainId as keyof typeof EVM_CHAINS];
+    if (!chain) {
+      throw new Error(`Unsupported chain ID: ${swapParams.chainId}`);
+    }
+
+    const provider = new ethers.JsonRpcProvider(chain.rpcUrl);
+    const walletInstance = new ethers.Wallet(wallet.privateKey, provider);
+
+    // Check if token approval is needed (skip for native tokens)
+    if (swapParams.fromTokenAddress !== ethers.ZeroAddress) {
+      const allowance = await getAllowance(
+        swapParams.fromTokenAddress,
+        wallet.address,
+        swapParams.chainId
+      );
+
+      if (!allowance || BigInt(allowance) < BigInt(swapParams.amount)) {
+        console.log('Approval needed, getting approval transaction...');
+        
+        const approvalTx = await getApprovalTransaction(
+          swapParams.fromTokenAddress,
+          swapParams.amount,
+          swapParams.chainId
+        );
+
+        if (approvalTx) {
+          const approveTx = await walletInstance.sendTransaction({
+            to: approvalTx.to,
+            data: approvalTx.data,
+            value: approvalTx.value,
+            gasPrice: approvalTx.gasPrice,
+          });
+          
+          console.log('Approval transaction sent:', approveTx.hash);
+          await approveTx.wait();
+          console.log('Approval confirmed');
+        }
+      }
+    }
+
+    // Get swap transaction
+    const swapTx = await getSwapTransaction({
+      chainId: swapParams.chainId,
+      fromToken: swapParams.fromTokenAddress,
+      toToken: swapParams.toTokenAddress,
+      amount: swapParams.amount,
+      address: wallet.address,
+      slippage: (swapParams.slippage * 100).toString(), // Convert to percentage
+    });
+
+    if (!swapTx) {
+      throw new Error('Failed to get swap transaction');
+    }
+
+    // Execute swap
+    const transaction = await walletInstance.sendTransaction({
+      to: swapTx.tx.to,
+      data: swapTx.tx.data,
+      value: swapTx.tx.value,
+      gasPrice: swapTx.tx.gasPrice,
+    });
+
+    console.log('1inch swap transaction sent:', transaction.hash);
+    await transaction.wait();
+    console.log('1inch swap confirmed');
+
+    return transaction.hash;
+  } catch (error) {
+    console.error('1inch swap failed:', error);
+    throw error;
+  }
+};
+```
+
+---
+
+## Method 2: Uniswap V2 Router (Ether-native approach)
+
+### DEX Router Configuration
+
+```typescript
+// DEX Router addresses for each chain
+export const getDexRouterAddress = (chainId: number): string => {
+  const routers = {
+    [EVM_CHAIN_IDS.ETHEREUM]: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // Uniswap V2
+    [EVM_CHAIN_IDS.POLYGON]: '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff', // QuickSwap
+    [EVM_CHAIN_IDS.BSC]: '0x10ED43C718714eb63d5aA57B78B54704E256024E',      // PancakeSwap V2
+    [EVM_CHAIN_IDS.ARBITRUM]: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506', // SushiSwap
+    [EVM_CHAIN_IDS.OPTIMISM]: '0x9c12939390052919aF3155f41Bf4160Fd3666A6f', // Velodrome
+    [EVM_CHAIN_IDS.AVALANCHE]: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4', // TraderJoe
+  };
+  
+  const router = routers[chainId as keyof typeof routers];
+  if (!router) {
+    throw new Error(`No DEX router found for chain ID: ${chainId}`);
+  }
+  return router;
+};
+
+// WETH addresses for each chain
+export const getWETHAddress = (chainId: number): string => {
+  const wethAddresses = {
+    [EVM_CHAIN_IDS.ETHEREUM]: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    [EVM_CHAIN_IDS.POLYGON]: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',  // WMATIC
+    [EVM_CHAIN_IDS.BSC]: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',       // WBNB
+    [EVM_CHAIN_IDS.ARBITRUM]: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', // WETH
+    [EVM_CHAIN_IDS.OPTIMISM]: '0x4200000000000000000000000000000000000006', // WETH
+    [EVM_CHAIN_IDS.AVALANCHE]: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7', // WAVAX
+  };
+  
+  const weth = wethAddresses[chainId as keyof typeof wethAddresses];
+  if (!weth) {
+    throw new Error(`No WETH address found for chain ID: ${chainId}`);
+  }
+  return weth;
+};
+```
+
+### Get Uniswap Quote
+
+```typescript
+/**
+ * Get quote using Uniswap V2 Router (Open Source - No API Key)
+ */
+export const getUniswapQuote = async (params: SwapParams): Promise<UniswapQuote | null> => {
+  try {
+    console.log('Getting Uniswap quote with params:', params);
+
+    const chain = EVM_CHAINS[params.chainId as keyof typeof EVM_CHAINS];
+    if (!chain) {
+      throw new Error(`Unsupported chain ID: ${params.chainId}`);
+    }
+
+    const provider = new ethers.JsonRpcProvider(chain.rpcUrl);
+    const routerAddress = getDexRouterAddress(params.chainId);
+    const wethAddress = getWETHAddress(params.chainId);
+    
+    // Uniswap V2 Router ABI for getAmountsOut
+    const routerAbi = [
+      'function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)',
+    ];
+    
+    const routerContract = new ethers.Contract(routerAddress, routerAbi, provider);
+    
+    // Build path
+    let path: string[] = [];
+    
+    const fromTokenIsNative = params.fromTokenAddress === ethers.ZeroAddress;
+    const toTokenIsNative = params.toTokenAddress === ethers.ZeroAddress;
+    
+    if (fromTokenIsNative && !toTokenIsNative) {
+      // Native to Token: ETH -> WETH -> Token
+      path = [wethAddress, params.toTokenAddress];
+    } else if (!fromTokenIsNative && toTokenIsNative) {
+      // Token to Native: Token -> WETH -> ETH
+      path = [params.fromTokenAddress, wethAddress];
+    } else if (!fromTokenIsNative && !toTokenIsNative) {
+      // Token to Token: Token -> WETH -> Token
+      path = [params.fromTokenAddress, wethAddress, params.toTokenAddress];
+    } else {
+      throw new Error('Invalid token pair');
+    }
+
+    // Get amounts out
+    const amounts = await routerContract.getAmountsOut(params.amount, path);
+    const outputAmount = amounts[amounts.length - 1];
+
+    const quote: UniswapQuote = {
+      fromToken: { address: params.fromTokenAddress, symbol: 'FROM', name: 'From Token', decimals: 18, isNative: fromTokenIsNative },
+      toToken: { address: params.toTokenAddress, symbol: 'TO', name: 'To Token', decimals: 18, isNative: toTokenIsNative },
+      fromAmount: params.amount,
+      toAmount: outputAmount.toString(),
+      gasEstimate: '250000',
+      priceImpact: '0.5',
+      route: { path, amounts: amounts.map((a: any) => a.toString()) },
+    };
+
+    console.log('Uniswap quote result:', quote);
+    return quote;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Uniswap quote failed: ${errorMessage}`, error);
+    return null;
+  }
+};
+```
+
+### Execute Uniswap Swap
+
+```typescript
+/**
+ * Execute swap using Uniswap V2 Router
+ */
+export const executeUniswapSwap = async (swapParams: SwapParams): Promise<string> => {
+  try {
+    console.log('Executing Uniswap swap with params:', swapParams);
+
+    // Load wallet
+    const wallet = await loadWallet();
+    if (!wallet) {
+      throw new Error('No wallet found');
+    }
+
+    const chain = EVM_CHAINS[swapParams.chainId as keyof typeof EVM_CHAINS];
+    if (!chain) {
+      throw new Error(`Unsupported chain ID: ${swapParams.chainId}`);
+    }
+
+    const provider = new ethers.JsonRpcProvider(chain.rpcUrl);
+    const walletInstance = new ethers.Wallet(wallet.privateKey, provider);
+    
+    const routerAddress = getDexRouterAddress(swapParams.chainId);
+    const wethAddress = getWETHAddress(swapParams.chainId);
+    
+    // Uniswap V2 Router ABI
+    const routerAbi = [
+      'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
+      'function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)',
+      'function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
+    ];
+    
+    const routerContract = new ethers.Contract(routerAddress, routerAbi, walletInstance);
+    
+    // Get quote first to calculate minimum output
+    const quote = await getUniswapQuote(swapParams);
+    if (!quote) {
+      throw new Error('Failed to get quote for swap');
+    }
+    
+    // Calculate minimum output with slippage
+    const outputAmount = BigInt(quote.toAmount);
+    const slippageBps = BigInt(Math.floor(swapParams.slippage * 10000));
+    const amountOutMin = outputAmount * (BigInt(10000) - slippageBps) / BigInt(10000);
+    
+    const deadline = Math.floor(Date.now() / 1000) + 1800; // 30 minutes
+    
+    let transaction;
+    
+    const fromTokenIsNative = swapParams.fromTokenAddress === ethers.ZeroAddress;
+    const toTokenIsNative = swapParams.toTokenAddress === ethers.ZeroAddress;
+    
+    if (fromTokenIsNative && !toTokenIsNative) {
+      // ETH to Token
+      const path = [wethAddress, swapParams.toTokenAddress];
+      transaction = await routerContract.swapExactETHForTokens(
+        amountOutMin,
+        path,
+        swapParams.fromAddress,
+        deadline,
+        { value: swapParams.amount }
+      );
+    } else if (!fromTokenIsNative && toTokenIsNative) {
+      // Token to ETH - First approve
+      const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+      const tokenContract = new ethers.Contract(swapParams.fromTokenAddress, tokenAbi, walletInstance);
+      const approveTx = await tokenContract.approve(routerAddress, swapParams.amount);
+      await approveTx.wait();
+      
+      const path = [swapParams.fromTokenAddress, wethAddress];
+      transaction = await routerContract.swapExactTokensForETH(
+        swapParams.amount,
+        amountOutMin,
+        path,
+        swapParams.fromAddress,
+        deadline
+      );
+    } else if (!fromTokenIsNative && !toTokenIsNative) {
+      // Token to Token - First approve
+      const tokenAbi = ['function approve(address spender, uint256 amount) external returns (bool)'];
+      const tokenContract = new ethers.Contract(swapParams.fromTokenAddress, tokenAbi, walletInstance);
+      const approveTx = await tokenContract.approve(routerAddress, swapParams.amount);
+      await approveTx.wait();
+      
+      const path = [swapParams.fromTokenAddress, wethAddress, swapParams.toTokenAddress];
+      transaction = await routerContract.swapExactTokensForTokens(
+        swapParams.amount,
+        amountOutMin,
+        path,
+        swapParams.fromAddress,
+        deadline
+      );
+    } else {
+      throw new Error('Invalid swap: cannot swap native to native');
+    }
+    
+    console.log('Uniswap swap transaction sent:', transaction.hash);
+    await transaction.wait();
+    console.log('Uniswap swap confirmed');
+    
+    return transaction.hash;
+  } catch (error) {
+    console.error('Uniswap swap failed:', error);
+    throw error;
+  }
+};
+```
+
+---
+
+
+### Basic Swap Implementation
+
+```typescript
+// Using Method 1: 1inch API
+const performOneInchSwap = async () => {
+  try {
+    const wallet = await loadWallet();
+    if (!wallet) throw new Error('No wallet found');
+
+    const swapParams: SwapParams = {
+      fromTokenAddress: ethers.ZeroAddress, // ETH
+      toTokenAddress: '0xA0b86991c431C6f916e6d6C4e4d2fdFB3e5A6B2E5', // USDC
+      amount: ethers.parseEther('0.1').toString(), // 0.1 ETH
+      fromAddress: wallet.address,
+      chainId: EVM_CHAIN_IDS.ETHEREUM,
+      slippage: 0.01, // 1%
+    };
+
+    const txHash = await executeOneInchSwap(swapParams);
+    console.log('1inch swap successful:', txHash);
+  } catch (error) {
+    console.error('1inch swap failed:', error);
+  }
+};
+
+// Using Method 2: Uniswap V2
+const performUniswapSwap = async () => {
+  try {
+    const wallet = await loadWallet();
+    if (!wallet) throw new Error('No wallet found');
+
+    const swapParams: SwapParams = {
+      fromTokenAddress: ethers.ZeroAddress, // ETH
+      toTokenAddress: '0xA0b86991c431C6f916e6d6C4e4d2fdFB3e5A6B2E5', // USDC
+      amount: ethers.parseEther('0.1').toString(), // 0.1 ETH
+      fromAddress: wallet.address,
+      chainId: EVM_CHAIN_IDS.ETHEREUM,
+      slippage: 0.01, // 1%
+    };
+
+    const txHash = await executeUniswapSwap(swapParams);
+    console.log('Uniswap swap successful:', txHash);
+  } catch (error) {
+    console.error('Uniswap swap failed:', error);
+  }
+};
+```
+
+### Multi-Chain Examples
+
+```typescript
+// Swap MATIC to USDC on Polygon using 1inch
+const swapMaticToUSDC = async () => {
+  const wallet = await loadWallet();
+  if (!wallet) throw new Error('No wallet found');
+
+  const swapParams: SwapParams = {
+    fromTokenAddress: ethers.ZeroAddress, // MATIC
+    toTokenAddress: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC on Polygon
+    amount: ethers.parseEther('10').toString(), // 10 MATIC
+    fromAddress: wallet.address,
+    chainId: EVM_CHAIN_IDS.POLYGON,
+    slippage: 0.01, // 1%
+  };
+
+  const txHash = await executeOneInchSwap(swapParams);
+  return txHash;
+};
+
+// Swap BNB to BUSD on BSC using Uniswap V2
+const swapBNBToBUSD = async () => {
+  const wallet = await loadWallet();
+  if (!wallet) throw new Error('No wallet found');
+
+  const swapParams: SwapParams = {
+    fromTokenAddress: ethers.ZeroAddress, // BNB
+    toTokenAddress: '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56', // BUSD
+    amount: ethers.parseEther('0.5').toString(), // 0.5 BNB
+    fromAddress: wallet.address,
+    chainId: EVM_CHAIN_IDS.BSC,
+    slippage: 0.005, // 0.5%
+  };
+
+  const txHash = await executeUniswapSwap(swapParams);
+  return txHash;
+};
+```
+
+## Security Considerations
+
+<div className="warning">
+  <strong>Security Best Practices</strong>
+  
+  - **API Key Protection**: Store 1inch API key securely, never expose in client code
+  - **Slippage Protection**: Set appropriate slippage tolerance (0.5% - 3%)
+  - **Token Approval**: Approve only required amounts, not unlimited approvals
+  - **Quote Validation**: Always get fresh quotes before executing swaps
+  - **Private Key Security**: Never log or expose private keys
+  - **Gas Management**: Monitor gas prices and set appropriate limits
+</div>
+
+## Integration with Other Modules
+
+### Related Modules
+
+- **[EVM Wallet Management](/evm-modules/wallet-management)** - Foundation wallet system (required dependency)
+- **[EVM Balance Fetching](/evm-modules/fetch-balance)** - Check token balances before swapping
+- **[EVM Transfer Tokens](/evm-modules/transfer-tokens)** - Transfer tokens after swapping
+
+### Cross-Module Usage Pattern
+
+```typescript
+import { loadWallet } from '@/utils/evm-wallet';           // Wallet management
+import { fetchTokenBalance } from '@/utils/evm-balance';   // Balance checking
+import { executeOneInchSwap, executeUniswapSwap } from '@/utils/evm-swap'; // This module
+
+const completeSwapFlow = async (swapParams: SwapParams, method: '1inch' | 'uniswap') => {
+  // 1. Load wallet
+  const wallet = await loadWallet();
+  if (!wallet) throw new Error('No wallet found');
+
+  // 2. Check balance before swap
+  const balance = await fetchTokenBalance({
+    address: wallet.address,
+    tokenAddress: swapParams.fromTokenAddress,
+    chainId: swapParams.chainId,
+  });
+
+  if (BigInt(balance) < BigInt(swapParams.amount)) {
+    throw new Error('Insufficient balance for swap');
+  }
+
+  // 3. Execute swap using selected method
+  const txHash = method === '1inch' 
+    ? await executeOneInchSwap(swapParams)
+    : await executeUniswapSwap(swapParams);
+  
+  return txHash;
+};
+```
+
+## Next Steps
+
+After implementing EVM token swapping, you can:
+
+- **[Implement Balance Monitoring](/evm-modules/fetch-balance)** - Track wallet and token balances across chains
+- **[Add Liquidity Management](/evm-modules/liquidity)** - Provide liquidity to DEX pools
+- **[Build Portfolio Tracking](/evm-modules/portfolio)** - Monitor swap history and performance
+- **[Integrate Price Feeds](/evm-modules/price-feeds)** - Real-time token price monitoring
+
+Your EVM swap system now supports both API-based optimal routing (1inch) and direct decentralized swapping (Uniswap V2) across all major EVM chains! 

@@ -1,0 +1,724 @@
+---
+title: 'Token Swaps'
+description: 'Complete guide to swapping tokens on Solana using Jupiter API in React Native'
+---
+
+This guide covers token swapping, SOL/SPL token transfers, and price quotes on Solana using Jupiter API in your React Native application.
+
+## Dependencies
+
+First, install the required dependencies:
+
+```bash
+npm install @solana/web3.js
+```
+
+<Info>
+Make sure you have already set up the [React Native Expo Web3 polyfills](/react-native-expo-setup) and [Wallet Management](/solana-modules/wallet-management) before implementing swap functionality.
+</Info>
+
+## Configuration
+
+### API Endpoints
+
+```typescript
+export const SOLANA_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=e9cfcd3a-4865-49b7-8f40-e35e2182bcef';
+export const JUPITER_API_URL = 'https://quote-api.jup.ag/v6';
+export const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';
+```
+
+## Core Architecture
+
+```
+app/utils/jupiter.ts
+├── Interfaces & Types     # TypeScript definitions
+├── Quote Functions        # Price and route fetching (Jupiter & Raydium)
+├── Swap Functions         # Transaction execution (Jupiter & Raydium)
+└── Utility Functions      # Popular tokens and helpers
+```
+
+
+
+## Popular Tokens
+
+### Token List
+
+```typescript
+export const POPULAR_TOKENS: TokenInfo[] = [
+  {
+    address: 'So11111111111111111111111111111111111111112',
+    symbol: 'SOL',
+    name: 'Solana',
+    decimals: 9,
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+  },
+  {
+    address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    symbol: 'USDC',
+    name: 'USD Coin',
+    decimals: 6,
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png'
+  },
+  {
+    address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    symbol: 'USDT',
+    name: 'Tether USD',
+    decimals: 6,
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png'
+  }
+];
+```
+
+## Core Interfaces and Types
+
+### Jupiter Quote Interface
+
+```typescript
+export interface JupiterQuote {
+  inputMint: string;
+  inAmount: string;
+  outputMint: string;
+  outAmount: string;
+  otherAmountThreshold: string;
+  swapMode: string;
+  slippageBps: number;
+  platformFee: null;
+  priceImpactPct: string;
+  routePlan: any[];
+  contextSlot: number;
+  timeTaken: number;
+}
+```
+
+### Swap Parameters Interface
+
+```typescript
+export interface SwapParams {
+  inputMint: string;    // Token mint address to swap from
+  outputMint: string;   // Token mint address to swap to
+  amount: number;       // Amount to swap (in token units)
+  slippageBps?: number; // Slippage tolerance (default: 50 = 0.5%)
+}
+```
+
+### Token Interface
+
+```typescript
+export interface TokenInfo {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoURI: string;
+}
+```
+
+### Raydium Interfaces
+
+```typescript
+export interface RaydiumQuote {
+  inputMint: string;
+  inputAmount: string;
+  outputMint: string;
+  outputAmount: string;
+  otherAmountThreshold: string;
+  slippageBps: number;
+  priceImpactPct: number;
+  referrerAmount: string;
+  routePlan: any[];
+  swapType: string;
+}
+
+export interface RaydiumQuoteResponse {
+  data: RaydiumQuote;
+  id: string;
+  success: boolean;
+  version: string;
+}
+
+export interface RaydiumSwapParams {
+  inputMint: string;
+  outputMint: string;
+  amount: number;
+  slippageBps?: number;
+}
+```
+
+## Utility Functions
+
+### Debug Logging
+
+```typescript
+const debugLog = (message: string, data?: any) => {
+  console.log(`[Jupiter] ${message}`, data || '');
+};
+```
+
+### Connection Setup
+
+```typescript
+import { Connection } from '@solana/web3.js';
+
+const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+```
+
+### Private Key Handling
+
+```typescript
+import { Keypair } from '@solana/web3.js';
+import { Buffer } from 'buffer';
+
+// Convert hex private key to Keypair (matching wallet management approach)
+export const createKeypairFromHex = (privateKeyHex: string): Keypair => {
+  const privateKeyBytes = Buffer.from(privateKeyHex, 'hex');
+  return Keypair.fromSecretKey(privateKeyBytes);
+};
+```
+
+## Quote Functions
+
+## Method 1: Jupiter (Recommended)
+
+### Get Jupiter Quote
+
+Fetch price quotes and swap routes from Jupiter:
+
+```typescript
+export const getJupiterQuote = async (params: SwapParams): Promise<JupiterQuote | null> => {
+  debugLog('Getting quote with params:', params);
+  
+  try {
+    const url = new URL(`${JUPITER_API_URL}/quote`);
+    url.searchParams.append('inputMint', params.inputMint);
+    url.searchParams.append('outputMint', params.outputMint);
+    url.searchParams.append('amount', params.amount.toString());
+    url.searchParams.append('slippageBps', (params.slippageBps || 50).toString());
+    
+    const response = await fetch(url.toString());
+    debugLog('Quote response status:', response.status);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const quote = await response.json();
+    debugLog('Quote data:', quote);
+    
+    return quote;
+  } catch (error) {
+    debugLog('Quote error:', error);
+    return null;
+  }
+};
+```
+
+### Advanced Quote Usage
+
+```typescript
+// Quote with custom slippage
+const getQuoteWithSlippage = async (
+  inputMint: string,
+  outputMint: string,
+  amount: number,
+  slippageBps: number = 100
+) => {
+  const quote = await getJupiterQuote({
+    inputMint,
+    outputMint,
+    amount,
+    slippageBps
+  });
+
+  if (!quote) {
+    console.error('Failed to get quote - check token addresses and amounts');
+    return null;
+  }
+
+  return {
+    ...quote,
+    outputAmount: parseFloat(quote.outAmount),
+    priceImpact: parseFloat(quote.priceImpactPct)
+  };
+};
+```
+
+### Execute Jupiter Swap
+
+```typescript
+export const executeJupiterSwap = async (
+  quote: JupiterQuote,
+  privateKey: string
+): Promise<string | null> => {
+  debugLog('Executing swap with quote:', quote);
+  
+  try {
+    // Convert hex private key and create keypair
+    const keypair = createKeypairFromHex(privateKey);
+    
+    // Get swap transaction from Jupiter
+    const swapResponse = await fetch(`${JUPITER_API_URL}/swap`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        quoteResponse: quote,
+        userPublicKey: keypair.publicKey.toString(),
+        wrapAndUnwrapSol: true,
+      }),
+    });
+
+    if (!swapResponse.ok) {
+      throw new Error(`Swap API error! status: ${swapResponse.status}`);
+    }
+
+    const { swapTransaction } = await swapResponse.json();
+    
+    // Deserialize and sign the transaction
+         // Deserialize and sign the transaction
+     const transactionBuf = Buffer.from(swapTransaction, 'base64');
+     const transaction = Transaction.from(transactionBuf);
+     
+     // Sign the transaction
+     transaction.sign(keypair);
+
+     // Send the transaction
+     const signature = await connection.sendRawTransaction(
+       transaction.serialize(),
+       {
+         skipPreflight: false,
+         preflightCommitment: 'confirmed',
+       }
+     );
+
+     debugLog('Transaction sent with signature:', signature);
+
+     // Confirm the transaction
+     await connection.confirmTransaction(signature, 'confirmed');
+     debugLog('Transaction confirmed:', signature);
+
+     return signature;
+  } catch (error) {
+    debugLog('Swap execution error:', error);
+    return null;
+  }
+};
+```
+
+## Method 2: Raydium
+
+### Get Raydium Quote
+
+Fetch price quotes and swap routes from Raydium:
+
+```typescript
+export const getRaydiumQuote = async (
+  params: RaydiumSwapParams
+): Promise<RaydiumQuote | null> => {
+  debugLog('Getting Raydium quote with params:', params);
+  
+  try {
+    const { inputMint, outputMint, amount, slippageBps = 50 } = params;
+
+    const url = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&txVersion=V0`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const quoteResponse: RaydiumQuoteResponse = await response.json();
+    debugLog('Raydium quote response:', quoteResponse);
+
+    if (!response.ok || !quoteResponse.success) {
+      throw new Error(
+        quoteResponse.data?.toString() || 'Failed to get Raydium quote'
+      );
+    }
+
+    return quoteResponse.data;
+  } catch (error) {
+    debugLog('Raydium quote error:', error);
+    return null;
+  }
+};
+```
+
+### Get Raydium Swap Transaction
+
+```typescript
+export const getRaydiumSwapTransaction = async (
+  quote: RaydiumQuote,
+  userPublicKey: string,
+  priorityFee?: number
+): Promise<string | null> => {
+  debugLog('Getting Raydium swap transaction for:', userPublicKey);
+  
+  try {
+    const response = await fetch(
+      `${RAYDIUM_API_URL}/transaction/swap-base-in`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          computeUnitPriceMicroLamports: String(priorityFee || 100000),
+          swapResponse: quote,
+          txVersion: 'V0',
+          wallet: userPublicKey,
+          wrapSol: true,
+          unwrapSol: true,
+        }),
+      }
+    );
+
+    const data = await response.json();
+    debugLog('Raydium transaction response:', data);
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to get Raydium swap transaction');
+    }
+
+    return data.data?.[0]?.transaction;
+  } catch (error) {
+    debugLog('Raydium transaction error:', error);
+    return null;
+  }
+};
+```
+
+### Execute Raydium Swap
+
+```typescript
+import { VersionedTransaction } from '@solana/web3.js';
+
+export const executeRaydiumSwap = async (
+  swapTransactionB64: string,
+  privateKey: string
+): Promise<string | null> => {
+  debugLog('Executing Raydium swap');
+  
+  try {
+    // Deserialize versioned transaction
+    const swapTransactionBuf = Buffer.from(swapTransactionB64, 'base64');
+    const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+
+    // Convert hex private key and create keypair
+    const keypair = createKeypairFromHex(privateKey);
+    
+    // Sign the transaction
+    transaction.sign([keypair]);
+
+    // Send the transaction
+    const signature = await connection.sendTransaction(transaction);
+    debugLog('Raydium transaction sent with signature:', signature);
+
+    // Confirm the transaction
+    await connection.confirmTransaction(signature, 'confirmed');
+    debugLog('Raydium transaction confirmed:', signature);
+
+    return signature;
+  } catch (error) {
+    debugLog('Raydium swap execution error:', error);
+    return null;
+  }
+};
+```
+
+### Complete Raydium Swap Flow
+
+```typescript
+export const performRaydiumSwap = async (
+  privateKey: string,
+  inputMint: string,
+  outputMint: string,
+  amount: number,
+  slippageBps: number = 50
+): Promise<string | null> => {
+  try {
+    // Step 1: Get quote
+    const quote = await getRaydiumQuote({
+      inputMint,
+      outputMint,
+      amount,
+      slippageBps
+    });
+
+    if (!quote) {
+      console.error('Failed to get Raydium quote');
+      return null;
+    }
+
+    // Step 2: Get user public key
+    const keypair = createKeypairFromHex(privateKey);
+    const userPublicKey = keypair.publicKey.toString();
+
+    // Step 3: Get swap transaction
+    const swapTransaction = await getRaydiumSwapTransaction(
+      quote,
+      userPublicKey,
+      100000 // Priority fee
+    );
+
+    if (!swapTransaction) {
+      console.error('Failed to get Raydium swap transaction');
+      return null;
+    }
+
+    // Step 4: Execute swap
+    const signature = await executeRaydiumSwap(swapTransaction, privateKey);
+    
+    return signature;
+  } catch (error) {
+    console.error('Raydium swap flow error:', error);
+    return null;
+  }
+};
+```
+
+## Usage Examples
+
+### Basic Token Swap
+
+#### Jupiter Method (Recommended)
+
+```typescript
+// Example: Swap 1 SOL for USDC using Jupiter
+const performJupiterSwap = async (privateKey: string) => {
+  try {
+    // Get quote
+    const quote = await getJupiterQuote({
+      inputMint: 'So11111111111111111111111111111111111111112', // SOL
+      outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+      amount: 1000000000, // 1 SOL (in lamports)
+      slippageBps: 50     // 0.5% slippage
+    });
+
+    if (!quote) {
+      console.error('Failed to get Jupiter quote');
+      return;
+    }
+
+    console.log(`Output amount: ${quote.outAmount}`);
+    console.log(`Price impact: ${quote.priceImpactPct}%`);
+
+    // Execute swap
+    const signature = await executeJupiterSwap(quote, privateKey);
+    
+    if (signature) {
+      console.log('Jupiter swap completed successfully:', signature);
+    } else {
+      console.error('Jupiter swap failed');
+    }
+  } catch (error) {
+    console.error('Jupiter swap operation failed:', error);
+  }
+};
+```
+
+#### Raydium Method
+
+```typescript
+// Example: Swap 1 SOL for USDC using Raydium
+const performRaydiumSwapExample = async (privateKey: string) => {
+  try {
+    const signature = await performRaydiumSwap(
+      privateKey,
+      'So11111111111111111111111111111111111111112', // SOL
+      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+      1000000000, // 1 SOL (in lamports)
+      50          // 0.5% slippage
+    );
+    
+    if (signature) {
+      console.log('Raydium swap completed successfully:', signature);
+    } else {
+      console.error('Raydium swap failed');
+    }
+  } catch (error) {
+    console.error('Raydium swap operation failed:', error);
+  }
+};
+```
+
+### Complete Swap Component
+
+```typescript
+// React Native component example
+import { useState } from 'react';
+import { loadWallet } from '@/utils/wallet'; // From wallet management
+
+export const SwapComponent = () => {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [method, setMethod] = useState<'jupiter' | 'raydium'>('jupiter');
+
+  const handleJupiterSwap = async () => {
+    setLoading(true);
+    try {
+      const wallet = await loadWallet();
+      if (!wallet) {
+        throw new Error('No wallet found');
+      }
+
+      // Use Jupiter method
+      await performJupiterSwap(wallet.privateKey);
+    } catch (error) {
+      console.error('Jupiter swap failed:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRaydiumSwap = async () => {
+    setLoading(true);
+    try {
+      const wallet = await loadWallet();
+      if (!wallet) {
+        throw new Error('No wallet found');
+      }
+
+      // Use Raydium method
+      const signature = await performRaydiumSwap(
+        wallet.privateKey,
+        'So11111111111111111111111111111111111111112', // SOL
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+        1000000000, // 1 SOL
+        50 // 0.5% slippage
+      );
+      setResult(signature);
+    } catch (error) {
+      console.error('Raydium swap failed:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    // Your React Native UI components here
+    // Add buttons to switch between Jupiter and Raydium methods
+    null
+  );
+};
+```
+
+## Security Considerations
+
+<Warning>
+**Important Security Notes:**
+- Never expose private keys in client-side code or logs
+- Always validate quotes before executing swaps
+- Use appropriate slippage settings for volatile tokens
+- Consider using hardware wallets for large transactions
+- Implement proper error handling and user feedback
+</Warning>
+
+## Error Handling
+
+Always wrap swap operations in comprehensive try-catch blocks:
+
+```typescript
+const safeSwapOperation = async (params: SwapParams, privateKey: string) => {
+  try {
+    // Validate inputs
+    if (!params.inputMint || !params.outputMint || !params.amount || !privateKey) {
+      throw new Error('Missing required parameters');
+    }
+
+    // Get quote
+    const quote = await getJupiterQuote(params);
+    if (!quote) {
+      throw new Error('Failed to get quote from Jupiter');
+    }
+
+    // Check price impact
+    const priceImpact = parseFloat(quote.priceImpactPct);
+    if (priceImpact > 5) { // 5% threshold
+      console.warn(`High price impact: ${priceImpact}%`);
+    }
+
+    // Execute swap
+    const signature = await executeJupiterSwap(quote, privateKey);
+    if (!signature) {
+      throw new Error('Failed to execute swap');
+    }
+
+    return signature;
+  } catch (error) {
+    console.error('Swap operation failed:', error);
+    // Handle error appropriately - show user message, retry logic, etc.
+    throw error;
+  }
+};
+```
+
+<Info>
+**Recommendation:** Use Jupiter for most swapping needs due to better price discovery. Use Raydium when you specifically need Raydium's features or pools.
+</Info>
+
+## Troubleshooting
+
+### Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| **"Failed to get quote"** | Invalid token addresses or insufficient liquidity | Verify token mint addresses and check if pair has liquidity |
+| **"Transaction failed"** | Insufficient SOL for fees or slippage exceeded | Ensure wallet has SOL for fees, increase slippage tolerance |
+| **"Network timeout"** | RPC connection issues | Use reliable RPC endpoint, implement retry logic |
+| **"Invalid private key"** | Incorrect key format or encoding | Ensure private key is hex encoded (matching wallet management) |
+| **"High price impact"** | Large trade size or low liquidity | Reduce swap amount or increase slippage tolerance |
+| **"Raydium API error"** | Raydium service issues | Try Jupiter method or retry later |
+| **"Versioned transaction error"** | RPC doesn't support V0 transactions | Use different RPC endpoint or Jupiter method |
+
+## API Endpoints Reference
+
+- **Jupiter Swap & Quote API**: `https://quote-api.jup.ag/v6/quote`
+- **Jupiter Swap API**: `https://quote-api.jup.ag/v6/swap`
+- **Documentation**: [Jupiter API Docs](https://station.jup.ag/docs/apis/swap-api)
+
+## Related Modules
+
+This swap system integrates seamlessly with other Solana modules:
+
+### Required Dependencies
+- **[Wallet Management](/solana-modules/wallet-management)** - **REQUIRED** - Provides `loadWallet()` and hex private key format
+- **[React Native Expo Setup](/react-native-expo-setup)** - **REQUIRED** - Web3 polyfills for crypto functions
+
+### Complementary Modules
+- **[Token Transfers](/solana-modules/transfer-token)** - Direct token transfers without swapping
+- **[Balance Fetching](/solana-modules/fetch-balance-solana)** - Check balances before/after swaps
+
+### Integration Pattern
+
+```typescript
+// Complete DeFi operation combining modules
+import { loadWallet } from '@/utils/wallet'; // Wallet Management
+import { getJupiterQuote, executeJupiterSwap } from '@/utils/jupiter'; // This module
+import { transferSOL } from '@/utils/transfer'; // Token Transfers
+
+const completeDeFiFlow = async () => {
+  // 1. Load wallet (from Wallet Management)
+  const wallet = await loadWallet();
+  
+  // 2. Perform swap (from this module)
+  const quote = await getJupiterQuote({...});
+  const swapSignature = await executeJupiterSwap(quote, wallet.privateKey);
+  
+  // 3. Transfer result (from Token Transfers)
+  const transferSignature = await transferSOL(wallet.privateKey, recipient, amount);
+};
+```
+
+## Next Steps
+
+With Solana swap functionality set up, you can now:
+- **[Transfer Tokens](/solana-modules/transfer-token)** - Send swapped tokens to other wallets
+- **[Check Balances](/solana-modules/fetch-balance-solana)** - Monitor wallet balances after swaps
+- **[Manage Wallets](/solana-modules/wallet-management)** - Create multiple wallets for different strategies
+- Implement advanced trading strategies combining all modules
+- Add price monitoring and alerts
+- Create portfolio management features
+- Build automated trading bots

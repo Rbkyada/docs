@@ -1,0 +1,346 @@
+---
+title: 'Wallet Management'
+description: 'Complete guide to creating, saving, and managing EVM wallets across multiple chains in React Native'
+---
+
+This guide covers creating, importing, saving, and managing EVM wallets for multiple blockchain networks in your React Native application using secure local storage.
+
+## Supported EVM Chains
+
+This wallet system works with all EVM-compatible networks including:
+- **Ethereum** - The original smart contract platform
+- **Binance Smart Chain (BSC)** - High-performance Binance ecosystem
+- **Polygon** - Fast and low-cost scaling solution
+- **Arbitrum** - Layer 2 optimistic rollup for Ethereum
+- **Optimism** - Layer 2 optimistic rollup with fast finality
+- **Base** - Coinbase's Layer 2 solution
+- **Avalanche C-Chain** - High-throughput smart contract platform
+- **Fantom** - Fast, scalable, and secure smart contract platform
+
+## Dependencies
+
+First, install the required dependencies:
+
+```bash
+npm install @react-native-async-storage/async-storage ethers
+```
+
+### Package Versions
+
+```json
+{
+  "ethers": "^6.14.3",
+  "@react-native-async-storage/async-storage": "^1.19.0"
+}
+```
+
+<Info>
+Make sure you have already set up the [React Native Expo Web3 polyfills](/react-native-expo-setup) before implementing EVM wallet management.
+</Info>
+
+## Core Interfaces and Types
+
+### WalletData Interface
+
+```typescript
+export interface WalletData {
+  address: string;        // EVM wallet address (0x...)
+  privateKey: string;     // Private key for signing transactions
+  mnemonic?: string;      // Optional mnemonic phrase (for wallets created from mnemonic)
+}
+```
+
+## Utility Functions
+
+### Ensure Crypto Ready
+
+Before generating wallets, ensure the crypto polyfills are properly initialized:
+
+```typescript
+const ensureCrypto = () => {
+  if (
+    typeof global.crypto === 'undefined' ||
+    typeof global.crypto.getRandomValues === 'undefined'
+  ) {
+    throw new Error('Crypto not initialized. Please set up Web3 polyfills first.');
+  }
+};
+```
+
+## Wallet Functions
+
+### Generate New Wallet
+
+Create a new EVM wallet with mnemonic phrase and save it automatically:
+
+```typescript
+import { ethers } from 'ethers';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export const generateWallet = async (): Promise<WalletData> => {
+  ensureCrypto();
+  
+  // Generate a random mnemonic
+  const mnemonic = ethers.Wallet.createRandom().mnemonic;
+  if (!mnemonic) {
+    throw new Error('Failed to generate mnemonic');
+  }
+
+  // Create wallet from mnemonic
+  const wallet = ethers.Wallet.fromPhrase(mnemonic.phrase);
+  
+  const walletData = {
+    address: wallet.address,
+    privateKey: wallet.privateKey,
+    mnemonic: mnemonic.phrase,
+  };
+
+  // Automatically save to storage
+  await AsyncStorage.setItem('evm_wallet', JSON.stringify(walletData));
+  
+  return walletData;
+};
+```
+
+### Import Wallet from Private Key
+
+Import an existing wallet using a private key and save it automatically:
+
+```typescript
+export const importFromPrivateKey = async (privateKey: string): Promise<WalletData> => {
+  ensureCrypto();
+  
+  try {
+    // Validate and create wallet from private key
+    const wallet = new ethers.Wallet(privateKey);
+    
+    const walletData = {
+      address: wallet.address,
+      privateKey: wallet.privateKey,
+    };
+
+    // Automatically save to storage
+    await AsyncStorage.setItem('evm_wallet', JSON.stringify(walletData));
+    
+    return walletData;
+  } catch (error) {
+    console.error('Error importing wallet from private key:', error);
+    throw new Error('Invalid private key format');
+  }
+};
+```
+
+### Import Wallet from Mnemonic
+
+Import an existing wallet using a mnemonic phrase and save it automatically:
+
+```typescript
+export const importFromMnemonic = async (mnemonic: string): Promise<WalletData> => {
+  ensureCrypto();
+  
+  try {
+    // Validate and create wallet from mnemonic
+    const wallet = ethers.Wallet.fromPhrase(mnemonic);
+    
+    const walletData = {
+      address: wallet.address,
+      privateKey: wallet.privateKey,
+      mnemonic,
+    };
+
+    // Automatically save to storage
+    await AsyncStorage.setItem('evm_wallet', JSON.stringify(walletData));
+    
+    return walletData;
+  } catch (error) {
+    console.error('Error importing wallet from mnemonic:', error);
+    throw new Error('Invalid mnemonic phrase');
+  }
+};
+```
+
+
+
+### Load Wallet from AsyncStorage
+
+Retrieve the saved wallet from local storage:
+
+```typescript
+export const loadWallet = async (): Promise<WalletData | null> => {
+  const walletJson = await AsyncStorage.getItem('evm_wallet');
+  return walletJson ? JSON.parse(walletJson) : null;
+};
+```
+
+### Clear Wallet
+
+Remove wallet data from storage:
+
+```typescript
+export const clearWallet = async () => {
+  await AsyncStorage.removeItem('evm_wallet');
+};
+```
+
+## Utility Helper Functions
+
+### Validate Address
+
+Check if a string is a valid EVM address:
+
+```typescript
+export const isValidAddress = (address: string): boolean => {
+  try {
+    return ethers.isAddress(address);
+  } catch {
+    return false;
+  }
+};
+```
+
+### Validate Private Key
+
+Check if a string is a valid private key:
+
+```typescript
+export const isValidPrivateKey = (privateKey: string): boolean => {
+  try {
+    new ethers.Wallet(privateKey);
+    return true;
+  } catch {
+    return false;
+  }
+};
+```
+
+### Validate Mnemonic
+
+Check if a mnemonic phrase is valid:
+
+```typescript
+export const isValidMnemonic = (mnemonic: string): boolean => {
+  try {
+    ethers.Wallet.fromPhrase(mnemonic);
+    return true;
+  } catch {
+    return false;
+  }
+};
+```
+
+## Usage Examples
+
+### Wallet Management Component
+
+```typescript
+import React, { useState, useEffect } from 'react';
+import { View, Text, Button, Alert } from 'react-native';
+
+export const EVMWalletComponent = () => {
+  const [wallet, setWallet] = useState<WalletData | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadSavedWallet();
+  }, []);
+
+  const loadSavedWallet = async () => {
+    try {
+      const savedWallet = await loadWallet();
+      setWallet(savedWallet);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to load wallet');
+    }
+  };
+
+  const createNewWallet = async () => {
+    setLoading(true);
+    try {
+      const newWallet = await generateWallet();
+      setWallet(newWallet);
+      Alert.alert('Success', `Created wallet: ${newWallet.address.substring(0, 20)}...`);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to create wallet');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearCurrentWallet = async () => {
+    try {
+      await clearWallet();
+      setWallet(null);
+      Alert.alert('Success', 'Wallet cleared');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to clear wallet');
+    }
+  };
+
+  return (
+    <View style={{ padding: 20 }}>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 20 }}>
+        EVM Wallet Manager
+      </Text>
+      
+      {wallet ? (
+        <View style={{ marginBottom: 20, padding: 15, backgroundColor: '#f0f0f0' }}>
+          <Text style={{ fontWeight: 'bold' }}>Current Wallet</Text>
+          <Text>Address: {wallet.address.substring(0, 20)}...</Text>
+          {wallet.mnemonic && (
+            <Text>Has Mnemonic: Yes</Text>
+          )}
+        </View>
+      ) : (
+        <Text style={{ marginBottom: 20, color: '#666' }}>
+          No wallet found. Create or import a wallet.
+        </Text>
+      )}
+
+      <View style={{ gap: 10 }}>
+        <Button 
+          title={loading ? "Creating..." : "Create New Wallet"} 
+          onPress={createNewWallet} 
+          disabled={loading}
+        />
+        
+        {wallet && (
+          <Button 
+            title="Clear Wallet" 
+            onPress={clearCurrentWallet}
+            color="#ff6b6b"
+          />
+        )}
+      </View>
+    </View>
+  );
+};
+```
+
+## Security Considerations
+
+<Warning>
+**Important Security Notes:**
+- Private keys and mnemonic phrases are stored in plain text in AsyncStorage
+- For production apps, consider using secure storage solutions like React Native Keychain
+- Never share or expose private keys or mnemonic phrases
+- Always validate wallet data before using it
+- Consider implementing additional security layers like PIN protection
+- Be cautious when handling mnemonic phrases - they provide full wallet access
+</Warning>
+
+
+## Integration with Other Modules
+
+This EVM wallet management system is the **foundation** for all other EVM operations. The wallet data format is used consistently across:
+
+- **[EVM Token Transfers](/evm-modules/transfer-tokens)** - Uses `loadWallet()` to get wallet data for transactions
+- **[EVM Token Swaps](/evm-modules/swap-tokens)** - Uses wallet privateKey for signing swap transactions  
+- **[EVM Balance Fetching](/evm-modules/fetch-balance)** - Uses wallet address to check account balances across chains
+
+
+## Next Steps
+
+With EVM wallet management set up, you can now:
+- **[Transfer Tokens](/evm-modules/transfer-tokens)** - Send ETH and ERC-20 tokens across EVM chains
+- **[Swap Tokens](/evm-modules/swap-tokens)** - Exchange tokens using Uniswap, PancakeSwap, and other DEXs
+- **[Check Balances](/evm-modules/fetch-balance)** - Monitor wallet 

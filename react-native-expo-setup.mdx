@@ -1,0 +1,70 @@
+---
+title: 'React Native Expo Web3 Setup'
+description: 'Complete guide to setting up Web3 development environment with React Native and Expo'
+---
+
+When building Web3 applications with React Native and Expo, certain polyfills and global configurations are required to ensure compatibility with Web3 libraries like Solana's web3.js, Evm wallet.
+
+## Required Polyfills and Global Setup
+
+### Install Necessary Packages
+
+First, install the required polyfill packages:
+
+```bash
+npm install react-native-get-random-values react-native-url-polyfill buffer
+```
+
+### Global Polyfill Configuration
+
+At the very top of your main entry file (e.g., `App.tsx` or `index.ts`), import and configure the necessary polyfills:
+
+```typescript
+// Import polyfills at the very top
+import 'react-native-get-random-values';
+import 'react-native-url-polyfill/auto';
+import { Buffer } from 'buffer';
+
+// Set up Buffer globally for Solana libraries
+if (typeof global.Buffer === 'undefined') {
+  global.Buffer = Buffer;
+}
+
+// Import getRandomValues function for crypto compatibility
+const { getRandomValues } = require('react-native-get-random-values');
+
+// Set up a global crypto object for web3.js
+if (typeof global.crypto === 'undefined') {
+  (global as any).crypto = {
+    getRandomValues: getRandomValues
+  };
+}
+
+export {}; // Make this a module
+```
+
+## Why These Polyfills Are Needed
+
+<Info>
+React Native doesn't include all the Web APIs that Web3 libraries expect. These polyfills bridge that gap:
+
+- **react-native-get-random-values**: Provides `crypto.getRandomValues()` for secure random number generation
+- **react-native-url-polyfill**: Adds URL and URLSearchParams support
+- **buffer**: Provides Node.js Buffer functionality that many Web3 libraries depend on
+</Info>
+
+## Important Notes
+
+<Warning>
+Make sure to import these polyfills **at the very top** of your entry file, before any other imports. The order matters for proper initialization.
+</Warning>
+
+## Next Steps
+
+Once you have the polyfills configured, you can proceed with:
+
+1. Installing your Web3 libraries (e.g., `@solana/web3.js`)
+2. Setting up wallet connections
+3. Implementing your Web3 functionality
+
+Your React Native Expo app is now ready for Web3 development! 
